@@ -3,9 +3,6 @@ Template = class {
     Template[name] = class extends React.Component {
       constructor(props) {
         super(props);
-
-        console.log("constructing "+ name + " with: ", this);
-
         this.init();
       }
 
@@ -15,7 +12,6 @@ Template = class {
       init() {
         const self = this;
         this._comps = {};
-        this.state = {};
         this.data = {};
         this.events = Template[name]._events || {};
         this.helpers = Template[name]._helpers || {};
@@ -25,20 +21,25 @@ Template = class {
         _.each(this.helpers, (fn, helper) => {
           // Define properties for all helpers.
           Object.defineProperty(this.data, helper, {
-            get: function() {
-              if (!self._comps[helper]) {
+            get: function(...args) {
+              args.push(self);
+              if (typeof self._comps[helper] === 'undefined') {
+                // Create a computation for the helper.
                 let state = {}, initial = true;
                 self._comps[helper] = Tracker.autorun(() => {
-                  self.state[helper] = fn.apply(self, arguments);
+                  state[helper] = fn.apply(this, args);
+                  // If helper returns a cursor, let's fetch the data for the state.
+                  if (state[helper] instanceof LocalCollection.Cursor) {
+                    state[helper] = state[helper].fetch();
+                  }
                   if (!initial) {
+                    // Set the state on the React Component.
                     self.setState(state);
                   }
                 });
                 initial = false;
               }
-              if (self.state && typeof self.state[helper] !== "undefined") {
-                return self.state[helper];
-              }
+              return fn.apply(this, args);
             }
           });
         });
@@ -50,7 +51,7 @@ Template = class {
 
         // Call all registered 'onCreated' callbacks
         _.each(Template[name]._callbacks.created, (func) => {
-          func.apply(Template[name]);
+          func.apply(this);
         });
       }
 
@@ -62,7 +63,7 @@ Template = class {
 
         // Call all registered 'onRendered' callbacks
         _.each(Template[name]._callbacks.rendered, (func) => {
-          func.apply(Template[name]);
+          func.apply(this);
         });
       }
 
@@ -72,12 +73,12 @@ Template = class {
         Template[name]._callbacks = Template[name]._callbacks || {};
         Template[name]._callbacks.destroyed = Template[name]._callbacks.destroyed || [];
 
-        for (let comp of this._comps) {
+        _.each(this._comps, (comp) => {
           comp.stop();
-        }
+        });
         // Call all registered 'onDestroyed' callbacks
         _.each(Template[name]._callbacks.destroyed, (func) => {
-          func.apply(Template[name]);
+          func.apply(this);
         });
         // Stop all template subscriptions
         _.each(this.subscriptionHandles, function (handle) {
@@ -125,7 +126,7 @@ Template = class {
         this._callbacks.destroyed.push(callback);
       }
 
-      static autorun(runFunc, onError) {
+      autorun(runFunc, onError) {
         this._trackers = this._trackers || [];
 
         if (Tracker.active) {
@@ -153,7 +154,7 @@ Template = class {
         return comp;
       }
 
-      static subscribe(name, ...args) {
+      subscribe(name, ...args) {
         if (this.isDestroyed) {
           throw new Error("Can't subscribe inside onDestroyed callback!");
         }
@@ -234,7 +235,7 @@ Template = class {
         return subHandle;
       }
 
-      static subscriptionsReady() {
+      subscriptionsReady() {
         // This dependency is used to identify state transitions in
         // _subscriptionHandles which could cause the result of
         // subscriptionsReady to change. Basically this is triggered
